@@ -94,6 +94,30 @@ Useful endpoints:
 - `POST /v1/spaces/{spaceId}/change-requests/{changeRequestId}/merge`
 - `GET /v1/spaces/{spaceId}/content/page/{pageId}`
 
+## GitBook-specific content elements — mandatory warnings
+
+GitBook supports UI-specific block types that are **not representable in standard Markdown** and are **not preserved** by the change-request API. These include:
+
+- Mermaid diagrams (`{% mermaid %}` blocks)
+- Hint / callout blocks (`{% hint style="..." %}`)
+- Tabs (`{% tabs %}`)
+- Expandable sections (`{% expand %}`)
+- Embed cards, API references, and other native GitBook blocks
+
+### Updating an existing page — WARNING
+
+> **You MUST warn the user before any `update_page` operation.**
+>
+> If the current page contains GitBook-specific elements, replacing it with plain Markdown **will permanently destroy those elements**. The API only accepts `{"markdown": "..."}`, so the native blocks cannot be round-tripped. The user must explicitly acknowledge this risk before the update proceeds.
+>
+> Prefer **appending content** (reconstruct with `doc_to_markdown`, append new Markdown, re-push) over full replacement. Always disclose what GitBook-native blocks exist on the page before writing — call `flatten_doc_text` and inspect the raw document to identify non-Markdown node types.
+
+### Creating a new page — NOTICE
+
+> **You MUST inform the user before any `insert_page` operation.**
+>
+> Pages created through the API are limited to standard Markdown. GitBook UI-specific elements (mermaid diagrams, hints, tabs, expandable sections, embedded content, etc.) **cannot be added via the API**. If the page requires these elements, the user must add them manually through the GitBook web UI after the page is created.
+
 ## Supported content operations
 
 ### Update an existing page
@@ -223,6 +247,8 @@ To verify content, use `GitBookClient.flatten_doc_text(document)` (also importab
 - Always identify the exact target space/page before writing.
 - Always re-read the current page immediately before editing.
 - Do not regenerate from an old local draft if a human may have edited the page since the draft was made.
+- **Before any `update_page`**: warn the user that GitBook-specific elements (mermaid, hints, tabs, expandable blocks, etc.) present on the page will be permanently lost if replaced with plain Markdown. Do not proceed without explicit user acknowledgement.
+- **Before any `insert_page`**: inform the user that only standard Markdown is supported via the API; GitBook UI-specific elements must be added manually in the GitBook web UI.
 - Apply the smallest targeted change when modifying an existing page.
 - Use one atomic change request for related multi-page edits.
 - Always verify through API reads after merge.
@@ -282,6 +308,8 @@ Or discard it from the GitBook UI. Creating a new change request for a retry is 
 - [ ] target space ID confirmed
 - [ ] target page ID or path confirmed
 - [ ] current page re-read before editing
+- [ ] (update) user warned about GitBook-specific elements and has explicitly acknowledged the risk
+- [ ] (create) user informed that GitBook UI-specific elements require manual addition in the web UI
 - [ ] change request created
 - [ ] change operations applied
 - [ ] change-request content verified when updating pages
