@@ -210,7 +210,9 @@ When updating several related pages:
 
 GitBook page reads may return native document JSON rather than Markdown. Do not assume `document.markdown` exists after reading a page.
 
-To verify content, recursively collect text fields from the returned `document` object and search for unique expected strings. The helper script provides `flatten_doc_text()` for this.
+To verify content, use `GitBookClient.flatten_doc_text(document)` (also importable as `from gitbook_api_helpers import flatten_doc_text`). It extracts all text leaves **and inline link URLs** from the document tree, so `required_substrings` can match either link labels or their `href` values.
+
+**Do not** pass raw URL strings as `required_substrings` if you intend to match link text — check what label the link uses in the page and match that instead if you want to be label-specific.
 
 ## Safety rules
 
@@ -225,6 +227,40 @@ To verify content, recursively collect text fields from the returned `document` 
 - Use one atomic change request for related multi-page edits.
 - Always verify through API reads after merge.
 
+## GitBook database tables
+
+GitBook pages may contain a native **database table** block type that is distinct from standard Markdown tables. These blocks appear in GET responses with `"type": "table"` and carry their data in a `data` object with `records`, `definition`, and a `fragments` array — not in the `nodes` tree.
+
+Key facts:
+
+- Sending the raw native document JSON back in an `update_page` change operation returns **HTTP 422**. The `document` field in change operations only accepts `{"markdown": "..."}`.
+- When doing a full-page markdown round-trip, use `GitBookClient.doc_to_markdown(document)` (also importable as `from gitbook_api_helpers import doc_to_markdown`). It reads the `fragments` array, keys cells by the `values` map in each record, and renders them as standard Markdown tables.
+- The round-trip loses GitBook-native table metadata (column widths, view settings). For pages with important database tables, **prefer appending content** rather than replacing the full page.
+- To append content without touching existing blocks: reconstruct the full page with `doc_to_markdown`, append your new Markdown, and push via `update_page_markdown`. Always re-read the page immediately before calling `doc_to_markdown` — never use a cached document.
+
+## Low-level API calls
+
+For requests not covered by the high-level helpers, use `client.call(method, path, body)`:
+
+```python
+status, data = client.call("GET", f"/spaces/{space_id}/change-requests")
+status, cr   = client.call("POST", f"/spaces/{space_id}/change-requests", {"subject": "My CR"})
+```
+
+The method returns `(http_status_code, decoded_json)` and raises `GitBookAPIError` on non-2xx responses.
+
+## Stale change requests
+
+When `apply_changes` or pre-merge verification fails, the change request is left open — it is **not** automatically deleted. Stale change requests accumulate in GitBook and clutter the review UI.
+
+Clean up a stale change request:
+
+```python
+client.delete_change_request(space_id, cr_id)
+```
+
+Or discard it from the GitBook UI. Creating a new change request for a retry is always safe; the stale one does not block subsequent merges.
+
 ## Common pitfalls
 
 - Direct writes such as `PUT/PATCH /spaces/{spaceId}/content/page/{pageId}` may fail with `405 method not supported`; use change requests instead.
@@ -233,6 +269,8 @@ To verify content, recursively collect text fields from the returned `document` 
 - For `content/path/{pagePath}`, encode the full path with `quote(path, safe='')`; otherwise paths containing `/` can fail.
 - Page title/navigation metadata and page body content are distinct concepts.
 - A page can exist but contain an empty document; always inspect the returned document.
+- **Do not** pass the native document JSON (from a GET response) as the `document` field in an `update_page` change operation — the API rejects it with HTTP 422. Only `{"markdown": "..."}` is accepted.
+- `flatten_doc_text` and `doc_to_markdown` are static methods on `GitBookClient` but are also exported as module-level functions. Import them directly (`from gitbook_api_helpers import flatten_doc_text`) or call them as `GitBookClient.flatten_doc_text(doc)`. Do **not** try to import them without the class prefix from an older version of the helper.
 - GitBook API behavior and schemas may evolve; re-check the OpenAPI spec if an endpoint or payload stops working.
 
 ## Quick checklist

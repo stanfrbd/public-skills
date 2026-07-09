@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Small CLI wrapper around gitbook_api_helpers.py.
 
 Required environment variables:

@@ -143,11 +143,21 @@ class GitBookClient:
 
     @staticmethod
     def flatten_doc_text(document: Any) -> str:
-        """Return all text found in a GitBook native document JSON object."""
+        """Return all text and link URLs found in a GitBook native document JSON object.
+
+        Text leaves, fragment cell text, and inline link URLs (data.ref.url) are all
+        included so that required_substrings checks can match either link labels or URLs.
+        """
         parts: list[str] = []
 
         def walk(value: Any) -> None:
             if isinstance(value, dict):
+                # Inline link: emit the href so URL-based required_substrings work
+                obj = value.get("object")
+                if obj == "inline" and value.get("type") == "link":
+                    url = value.get("data", {}).get("ref", {}).get("url", "")
+                    if url:
+                        parts.append(url)
                 text = value.get("text")
                 if isinstance(text, str):
                     parts.append(text)
@@ -156,8 +166,11 @@ class GitBookClient:
                         parts.append(leaf["text"])
                 for child in value.get("nodes", []) or []:
                     walk(child)
+                # Walk fragments (used by GitBook database tables)
+                for frag in value.get("fragments", []) or []:
+                    walk(frag)
                 for key, child in value.items():
-                    if key not in {"nodes", "leaves", "text", "key"}:
+                    if key not in {"nodes", "leaves", "text", "key", "fragments"}:
                         walk(child)
             elif isinstance(value, list):
                 for item in value:
@@ -165,6 +178,120 @@ class GitBookClient:
 
         walk(document)
         return "".join(parts)
+
+    @staticmethod
+    def doc_to_markdown(document: Any) -> str:
+        """Convert a GitBook native document JSON object to Markdown.
+
+        Handles the standard block types returned by the GitBook API:
+        heading-1/2/3, paragraph, code/code-line, list-unordered/ordered/item,
+        and GitBook database tables (records + fragments). Inline marks (bold,
+        italic, code) and inline links are preserved.
+
+        Use this when you need to round-trip an existing page through markdown
+        for update_page_markdown. Always re-read the page immediately before
+        calling this — never use a cached document.
+
+        WARNING: GitBook database tables are rendered as standard Markdown tables.
+        Cell content is read from the fragments array keyed by the values map.
+        This is accurate but the resulting Markdown table will lose GitBook-native
+        table metadata (column widths, view settings, etc.) on the next write.
+        For pages with important database tables, prefer appending content to the
+        end of the document rather than replacing the full page.
+        """
+
+        def render_inline(nodes: Any) -> str:
+            parts: list[str] = []
+            for n in nodes or []:
+                if not isinstance(n, dict):
+                    continue
+                obj = n.get("object")
+                if obj == "text":
+                    for leaf in n.get("leaves", []):
+                        t = leaf.get("text", "")
+                        marks = {m["type"] for m in leaf.get("marks", [])}
+                        if "bold" in marks:
+                            t = f"**{t}**"
+                        if "italic" in marks:
+                            t = f"*{t}*"
+                        if "code" in marks:
+                            t = f"`{t}`"
+                        parts.append(t)
+                elif obj == "inline" and n.get("type") == "link":
+                    url = n.get("data", {}).get("ref", {}).get("url", "")
+                    label = render_inline(n.get("nodes", []))
+                    parts.append(f"[{label}]({url})")
+            return "".join(parts)
+
+        def build_frag_map(table_node: dict) -> dict[str, str]:
+            """Build fragment-id → cell-text lookup for a database table node."""
+            fmap: dict[str, str] = {}
+            for frag in table_node.get("fragments", []):
+                fid = frag.get("fragment")
+                if fid:
+                    cell_parts = [
+                        render_inline(block.get("nodes", []))
+                        for block in frag.get("nodes", [])
+                    ]
+                    fmap[fid] = " ".join(cell_parts).strip()
+            return fmap
+
+        def render_table(node: dict) -> str:
+            data = node.get("data", {})
+            defn = data.get("definition", {})
+            records_raw = data.get("records", {})
+            col_order = data.get("view", {}).get("columns", list(defn.keys()))
+            fmap = build_frag_map(node)
+            headers = [defn[c]["title"] for c in col_order if c in defn]
+            rows = sorted(records_raw.values(), key=lambda r: r.get("orderIndex", ""))
+            lines = [
+                "| " + " | ".join(headers) + " |",
+                "| " + " | ".join(["---"] * len(headers)) + " |",
+            ]
+            for row in rows:
+                cells = [fmap.get(row.get("values", {}).get(c, ""), "") for c in col_order]
+                lines.append("| " + " | ".join(cells) + " |")
+            return "\n".join(lines)
+
+        def render_block(node: dict, list_prefix: str = "") -> str:
+            t = node.get("type")
+            children = node.get("nodes", [])
+            if t == "heading-1":
+                return "# " + render_inline(children)
+            elif t == "heading-2":
+                return "## " + render_inline(children)
+            elif t == "heading-3":
+                return "### " + render_inline(children)
+            elif t == "paragraph":
+                return render_inline(children)
+            elif t == "code":
+                lines = [
+                    render_inline(c.get("nodes", []))
+                    for c in children
+                    if c.get("type") == "code-line"
+                ]
+                return "```\n" + "\n".join(lines) + "\n```"
+            elif t == "list-unordered":
+                return "\n".join(render_block(i, "- ") for i in children)
+            elif t == "list-ordered":
+                return "\n".join(render_block(i, f"{n + 1}. ") for n, i in enumerate(children))
+            elif t == "list-item":
+                result_lines = []
+                for i, child in enumerate(children):
+                    text = render_block(child)
+                    result_lines.append((list_prefix if i == 0 else "  ") + text)
+                return "\n".join(result_lines)
+            elif t == "table":
+                return render_table(node)
+            else:
+                return render_inline(children)
+
+        md_blocks = []
+        for node in (document.get("nodes") or []):
+            rendered = render_block(node)
+            if rendered.strip():
+                md_blocks.append(rendered)
+        return "\n\n".join(md_blocks)
 
     def create_change_request(self, space_id: str, subject: str) -> str:
         """Create a change request and return its ID."""
@@ -257,6 +384,15 @@ class GitBookClient:
         self.merge_change_request(space_id, cr_id)
         return {"change_request_id": cr_id}
 
+    def delete_change_request(self, space_id: str, change_request_id: str) -> None:
+        """Delete (discard) an open change request without merging it.
+
+        Use this to clean up stale change requests left behind when apply_changes
+        or pre-merge verification fails. GitBook change requests are not
+        automatically deleted on error.
+        """
+        self.call("DELETE", f"/spaces/{space_id}/change-requests/{change_request_id}")
+
     @staticmethod
     def _assert_text_checks(
         text: str,
@@ -271,3 +407,9 @@ class GitBookClient:
                 f"GitBook verification failed in {phase}: "
                 f"missing={missing!r}, unexpected={unexpected!r}"
             )
+
+
+# Module-level aliases so these can be imported directly:
+#   from gitbook_api_helpers import flatten_doc_text, doc_to_markdown
+flatten_doc_text = GitBookClient.flatten_doc_text
+doc_to_markdown = GitBookClient.doc_to_markdown
