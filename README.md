@@ -8,11 +8,10 @@ A public collection of reusable skills intended to work with any compatible agen
 
 ## GitBook prerequisites
 
-To use the GitBook skill, the environment variable `GITBOOK_TOKEN` must already be set.
+To use the GitBook skill, these environment variables must already be set:
 
-Optional but recommended:
-
-- `GITBOOK_ORG_ID` for organization discovery and auth checks
+- `GITBOOK_TOKEN`
+- `GITBOOK_ORG_ID`
 
 You also need one of the following targets:
 
@@ -62,7 +61,6 @@ The GitBook skill covers:
 
 ```bash
 export GITBOOK_TOKEN="..."
-# Optional:
 export GITBOOK_ORG_ID="..."
 
 cd skills/gitbook-api

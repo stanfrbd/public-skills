@@ -2,10 +2,8 @@
 
 The helper reads credentials from environment variables and never prints secrets.
 
-Required environment variable:
+Required environment variables:
 - GITBOOK_TOKEN
-
-Optional environment variable:
 - GITBOOK_ORG_ID
 
 Example:
@@ -58,6 +56,8 @@ class GitBookClient:
         self.org_id = self.org_id or os.getenv("GITBOOK_ORG_ID")
         if not self.token:
             raise RuntimeError("GITBOOK_TOKEN is not set")
+        if not self.org_id:
+            raise RuntimeError("GITBOOK_ORG_ID is not set")
         self.headers = {
             "Authorization": f"Bearer {self.token}",
             "Accept": "application/json",
@@ -85,13 +85,12 @@ class GitBookClient:
     def verify_auth(self) -> dict[str, Any]:
         """Verify Bearer auth without exposing the token."""
         result: dict[str, Any] = {}
-        if self.org_id:
-            status, org = self.call("GET", f"/orgs/{self.org_id}")
-            result["org"] = {
-                "status": status,
-                "id": org.get("id"),
-                "title": org.get("title"),
-            }
+        status, org = self.call("GET", f"/orgs/{self.org_id}")
+        result["org"] = {
+            "status": status,
+            "id": org.get("id"),
+            "title": org.get("title"),
+        }
         status, user = self.call("GET", "/user")
         result["user"] = {
             "status": status,
@@ -103,8 +102,6 @@ class GitBookClient:
     def list_spaces(self, org_id: str | None = None) -> list[dict[str, Any]]:
         """List spaces for an organization, handling pagination."""
         organization = org_id or self.org_id
-        if not organization:
-            raise RuntimeError("org_id or GITBOOK_ORG_ID is required to list spaces")
 
         spaces: list[dict[str, Any]] = []
         page: str | None = None

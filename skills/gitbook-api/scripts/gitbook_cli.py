@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Small CLI wrapper around gitbook_api_helpers.py.
 
-Required environment variable:
+Required environment variables:
 - GITBOOK_TOKEN
-
-Optional environment variable:
 - GITBOOK_ORG_ID
 
 Examples:

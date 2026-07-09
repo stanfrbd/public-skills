@@ -5,7 +5,6 @@ version: 1.1.0
 license: MIT
 required_environment_variables:
   - GITBOOK_TOKEN
-optional_environment_variables:
   - GITBOOK_ORG_ID
 ---
 
@@ -17,15 +16,14 @@ Use this skill to interact with GitBook through its documented public API: list 
 
 This skill is intentionally agent-neutral. Any agent or automation that can run Python or make HTTP requests can use it.
 
-## Required prerequisite
+## Required prerequisites
 
-`GITBOOK_TOKEN` must be set as an environment variable.
+The following environment variables must be set:
 
-Do not paste the token into prompts, logs, temporary files, Markdown drafts, or code committed to a repository. The helper script reads the token from the environment.
+- `GITBOOK_TOKEN`
+- `GITBOOK_ORG_ID`
 
-Optional but recommended:
-
-- `GITBOOK_ORG_ID` for organization-level discovery and auth checks
+Do not paste the token into prompts, logs, temporary files, Markdown drafts, or code committed to a repository. The helper script reads credentials from the environment.
 
 ## Target prerequisite
 
@@ -57,16 +55,16 @@ Do **not** use other authorization schemes unless the current official GitBook d
 
 Recommended auth checks:
 
+- `GET /v1/orgs/{orgId}` using `GITBOOK_ORG_ID`
 - `GET /v1/user`
-- `GET /v1/orgs/{orgId}` when `GITBOOK_ORG_ID` is available
 
 Only report HTTP status and non-sensitive metadata. Never print the token.
 
 ## Core read workflow
 
-1. Check that `GITBOOK_TOKEN` is present without printing it.
-2. Verify auth with `GET /v1/user`.
-3. If an organization ID is available, verify it with `GET /v1/orgs/{orgId}`.
+1. Check that `GITBOOK_TOKEN` and `GITBOOK_ORG_ID` are present without printing their values.
+2. Verify organization access with `GET /v1/orgs/{orgId}`.
+3. Verify user auth with `GET /v1/user`.
 4. List spaces with `GET /v1/orgs/{orgId}/spaces` when needed.
 5. Resolve the target page:
    - from the page tree: `GET /v1/spaces/{spaceId}/content/pages`
@@ -160,7 +158,7 @@ Run commands from `skills/gitbook-api`:
 
 ```bash
 export GITBOOK_TOKEN="..."
-export GITBOOK_ORG_ID="..." # optional
+export GITBOOK_ORG_ID="..."
 
 python3 scripts/gitbook_cli.py verify-auth
 python3 scripts/gitbook_cli.py list-spaces
@@ -217,8 +215,9 @@ To verify content, recursively collect text fields from the returned `document` 
 ## Safety rules
 
 - Never print `GITBOOK_TOKEN`.
+- Never print `GITBOOK_ORG_ID` unless it is already intended to be shared internally.
 - Never commit tokens or generated files containing tokens.
-- Always use `Authorization: Bearer <token>`.
+- Always use the Bearer authorization scheme with the token value from `GITBOOK_TOKEN`.
 - Always identify the exact target space/page before writing.
 - Always re-read the current page immediately before editing.
 - Do not regenerate from an old local draft if a human may have edited the page since the draft was made.
@@ -239,8 +238,9 @@ To verify content, recursively collect text fields from the returned `document` 
 ## Quick checklist
 
 - [ ] `GITBOOK_TOKEN` exists and was not printed
-- [ ] auth verified through `GET /v1/user`
-- [ ] organization checked when relevant
+- [ ] `GITBOOK_ORG_ID` exists and was not printed
+- [ ] organization access verified through `GET /v1/orgs/{orgId}`
+- [ ] user auth verified through `GET /v1/user`
 - [ ] target space ID confirmed
 - [ ] target page ID or path confirmed
 - [ ] current page re-read before editing
