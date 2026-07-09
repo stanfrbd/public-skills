@@ -8,7 +8,9 @@ A public collection of reusable skills intended to work with any compatible agen
 
 ## Prerequisites
 
-To use the GitBook skill, you must already have one of the following:
+To use the GitBook skill, the environment variable `GITBOOK_TOKEN` must already be set.
+
+You also need one of the following:
 
 - an organization ID and API token, or
 - a specific space, or

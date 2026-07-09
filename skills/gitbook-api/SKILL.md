@@ -15,6 +15,8 @@ This skill is intentionally generic and suitable for any agent or automation tha
 
 ## Prerequisites
 
+This skill requires the environment variable `GITBOOK_TOKEN` to be set.
+
 Before using the workflow, you must already know at least one of these:
 
 - a target **space**
