@@ -1,95 +1,251 @@
 ---
 name: gitbook-api
 description: Work with GitBook organizations, spaces, pages, documents, and documented API-based content updates.
-version: 1.0.0
+version: 1.1.0
 license: MIT
+required_environment_variables:
+  - GITBOOK_TOKEN
+optional_environment_variables:
+  - GITBOOK_ORG_ID
 ---
 
 # GitBook API
 
 ## Overview
 
-Use this skill when you need to interact with GitBook through its documented API: listing organizations, discovering spaces, resolving page IDs or page paths, reading page content, and creating change requests for content updates.
+Use this skill to interact with GitBook through its documented public API: list organizations/spaces, resolve page IDs or page paths, read page content, create pages, update pages, delete pages, and verify content changes.
 
-This skill is intentionally generic and suitable for any agent or automation that can make HTTP requests.
+This skill is intentionally agent-neutral. Any agent or automation that can run Python or make HTTP requests can use it.
 
-## Prerequisites
+## Required prerequisite
 
-This skill requires the environment variable `GITBOOK_TOKEN` to be set.
+`GITBOOK_TOKEN` must be set as an environment variable.
 
-Before using the workflow, you must already know at least one of these:
+Do not paste the token into prompts, logs, temporary files, Markdown drafts, or code committed to a repository. The helper script reads the token from the environment.
 
-- a target **space**
-- a target **page**
-- a GitBook page URL that includes the space and page location
+Optional but recommended:
 
-If you only know the organization, resolve the relevant space first.
+- `GITBOOK_ORG_ID` for organization-level discovery and auth checks
 
-Typical inputs:
+## Target prerequisite
 
-- API token
-- organization ID
-- space ID
-- page ID or page path
+Before editing content, the user must provide or identify at least one of these:
 
-## Source of truth
+- a target **space ID**
+- a target **page ID**
+- a GitBook page URL that includes the target space and page path
 
-Always verify behavior against the live GitBook OpenAPI specification.
+If only an organization is known, first list spaces and select the correct target space.
 
-A copy of the current spec is included in this repository for convenience, but it can become outdated as the API evolves.
+## Included files
+
+- `scripts/gitbook_api_helpers.py` — Python standard-library helper for GitBook API work
+- `scripts/gitbook_cli.py` — small CLI wrapper for team usage
+- `references/openapi.yaml` — bundled copy of the GitBook OpenAPI specification
+
+The OpenAPI copy is included for convenience and can become outdated. When precision matters, compare it with the live GitBook API documentation.
+
+## Authentication rules
+
+Use:
+
+```http
+Authorization: Bearer <GITBOOK_TOKEN>
+```
+
+Do **not** use other authorization schemes unless the current official GitBook documentation explicitly requires them.
+
+Recommended auth checks:
+
+- `GET /v1/user`
+- `GET /v1/orgs/{orgId}` when `GITBOOK_ORG_ID` is available
+
+Only report HTTP status and non-sensitive metadata. Never print the token.
 
 ## Core read workflow
 
-### 1) Resolve the organization
-
-If needed, confirm access to the organization before going deeper.
-
-### 2) List spaces
-
-Use the organization spaces endpoint to enumerate available spaces.
-
-### 3) Resolve the target page
-
-If you have a page URL or page path, map it to a concrete page ID inside the correct space.
-
-Useful patterns:
-
-- enumerate the page tree for the space
-- resolve a page by path when available
-- fetch the concrete page document once the page ID is known
+1. Check that `GITBOOK_TOKEN` is present without printing it.
+2. Verify auth with `GET /v1/user`.
+3. If an organization ID is available, verify it with `GET /v1/orgs/{orgId}`.
+4. List spaces with `GET /v1/orgs/{orgId}/spaces` when needed.
+5. Resolve the target page:
+   - from the page tree: `GET /v1/spaces/{spaceId}/content/pages`
+   - by page ID: `GET /v1/spaces/{spaceId}/content/page/{pageId}`
+   - by path: `GET /v1/spaces/{spaceId}/content/path/{pagePath}`
+6. For path lookup, encode the **whole page path** with `urllib.parse.quote(path, safe='')`, including `/` characters.
+7. Read the current page before any write.
 
 ## Write workflow
 
-For content updates, prefer the documented change-request flow rather than guessing a direct page write endpoint.
+GitBook public API content writes should go through change requests. Do not guess direct `PUT` or `PATCH` endpoints on pages/documents.
 
 Recommended sequence:
 
-1. create a change request in the target space
-2. add the content update to the change request
-3. inspect the draft content if needed
-4. merge the change request
-5. verify the resulting page content
+1. Create a change request.
+2. Send one or more content changes to the change request.
+3. Re-read the page inside the change request when updating existing pages.
+4. Verify unique strings before merge.
+5. Merge the change request.
+6. Re-read the final page and verify unique strings after merge.
 
-## Practical rule
+Useful endpoints:
 
-Do not attempt a content update until the target space or page is already identified.
+- `POST /v1/spaces/{spaceId}/change-requests`
+- `POST /v1/spaces/{spaceId}/change-requests/{changeRequestId}/content`
+- `GET /v1/spaces/{spaceId}/change-requests/{changeRequestId}/content/page/{pageId}`
+- `POST /v1/spaces/{spaceId}/change-requests/{changeRequestId}/merge`
+- `GET /v1/spaces/{spaceId}/content/page/{pageId}`
 
-The intended starting point is always a known **space** or **page**.
+## Supported content operations
 
-## What to verify
+### Update an existing page
 
-- the token works for the target organization or space
-- the space is the correct one
-- the page ID or page path resolves correctly
-- the endpoint is documented in the current OpenAPI spec
-- the intended write path is supported by GitBook change requests
+```json
+{
+  "changes": [
+    {
+      "operation": "update_page",
+      "page": "PAGE_ID",
+      "document": {
+        "markdown": "# Title\n\nUpdated content.\n"
+      }
+    }
+  ]
+}
+```
 
-## Notes on API drift
+### Insert a new page
 
-The GitBook API may change over time.
+```json
+{
+  "changes": [
+    {
+      "operation": "insert_page",
+      "title": "New page",
+      "into": "PARENT_PAGE_ID",
+      "at": 0,
+      "document": {
+        "markdown": "# New page\n\nContent.\n"
+      }
+    }
+  ]
+}
+```
 
-If this document or the bundled OpenAPI copy does not match the live API, update the repository documentation and re-verify the workflow before using it operationally.
+Notes:
 
-## References
+- `into` is optional; omit it to create the page at the root of the space.
+- `at` is optional; omit it to append at the end.
 
-- Bundled OpenAPI copy included in this repository
+### Delete a page
+
+```json
+{
+  "changes": [
+    {
+      "operation": "delete_page",
+      "page": "PAGE_ID"
+    }
+  ]
+}
+```
+
+## Helper script usage
+
+The helper and CLI use only the Python standard library.
+
+### CLI examples
+
+Run commands from `skills/gitbook-api`:
+
+```bash
+export GITBOOK_TOKEN="..."
+export GITBOOK_ORG_ID="..." # optional
+
+python3 scripts/gitbook_cli.py verify-auth
+python3 scripts/gitbook_cli.py list-spaces
+python3 scripts/gitbook_cli.py page-by-path SPACE_ID folder/page-slug
+python3 scripts/gitbook_cli.py get-page SPACE_ID PAGE_ID
+python3 scripts/gitbook_cli.py update-page SPACE_ID PAGE_ID ./content.md --subject "Update docs" --require "Expected text"
+```
+
+### Python examples
+
+```python
+import sys
+sys.path.insert(0, "skills/gitbook-api/scripts")
+
+from gitbook_api_helpers import GitBookClient
+
+client = GitBookClient()
+print(client.verify_auth())
+
+page = client.get_page_by_path("SPACE_ID", "folder/page-slug")
+page_id = page["id"]
+
+result = client.update_page_markdown(
+    space_id="SPACE_ID",
+    page_id=page_id,
+    markdown="# Title\n\nUpdated content.\n",
+    subject="Update page content",
+    required_substrings=["Updated content"],
+)
+
+print(result["change_request_id"])
+```
+
+For a repository-local script, add the helper directory to `PYTHONPATH` or import it by path from `skills/gitbook-api/scripts`.
+
+## Multi-page update pattern
+
+When updating several related pages:
+
+1. Resolve all target page IDs first.
+2. Re-read all current pages before drafting updates.
+3. Create one change request for the logical update.
+4. Send multiple `update_page` operations in one `changes` array.
+5. Verify each page inside the change request.
+6. Merge once.
+7. Re-read every final page and verify expected strings.
+
+## Verification details
+
+GitBook page reads may return native document JSON rather than Markdown. Do not assume `document.markdown` exists after reading a page.
+
+To verify content, recursively collect text fields from the returned `document` object and search for unique expected strings. The helper script provides `flatten_doc_text()` for this.
+
+## Safety rules
+
+- Never print `GITBOOK_TOKEN`.
+- Never commit tokens or generated files containing tokens.
+- Always use `Authorization: Bearer <token>`.
+- Always identify the exact target space/page before writing.
+- Always re-read the current page immediately before editing.
+- Do not regenerate from an old local draft if a human may have edited the page since the draft was made.
+- Apply the smallest targeted change when modifying an existing page.
+- Use one atomic change request for related multi-page edits.
+- Always verify through API reads after merge.
+
+## Common pitfalls
+
+- Direct writes such as `PUT/PATCH /spaces/{spaceId}/content/page/{pageId}` may fail with `405 method not supported`; use change requests instead.
+- `permissions.edit=true` does not by itself prove that a guessed write endpoint exists.
+- `/v1/orgs/{orgId}/...` is the organization endpoint family used by these workflows; do not assume `/v1/organizations/{orgId}/...` is equivalent.
+- For `content/path/{pagePath}`, encode the full path with `quote(path, safe='')`; otherwise paths containing `/` can fail.
+- Page title/navigation metadata and page body content are distinct concepts.
+- A page can exist but contain an empty document; always inspect the returned document.
+- GitBook API behavior and schemas may evolve; re-check the OpenAPI spec if an endpoint or payload stops working.
+
+## Quick checklist
+
+- [ ] `GITBOOK_TOKEN` exists and was not printed
+- [ ] auth verified through `GET /v1/user`
+- [ ] organization checked when relevant
+- [ ] target space ID confirmed
+- [ ] target page ID or path confirmed
+- [ ] current page re-read before editing
+- [ ] change request created
+- [ ] change operations applied
+- [ ] change-request content verified when updating pages
+- [ ] change request merged
+- [ ] final page re-read and verified
